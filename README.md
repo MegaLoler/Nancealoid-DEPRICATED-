@@ -23,3 +23,5 @@ gonna make `glottis` accept midi input for playing notes
 and probably make `tract` accept midi control signals for changing the shape of the tract
 
 eventually it'd b cool to assign midi notes on channel 10 to preset vocal tract shapes corresponding to different phonemes
+
+also a visualizer wld b cool

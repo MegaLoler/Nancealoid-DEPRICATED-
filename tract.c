@@ -96,7 +96,7 @@ void init_tract(double desired_length) {
 #endif
 
     // test set the tract shape
-    segments_front[nsegments-2].z = 0.1;
+    //segments_front[nsegments-2].z = 0.1;
 
     // print some INTERESTING INFORMATION,
     printf("rate = %ihz\n", rate);
