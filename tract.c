@@ -11,13 +11,26 @@
 #include <unistd.h>
 #include <string.h>
 #include <jack/jack.h>
+#include <jack/midiport.h>
 
 #define SPEED_OF_SOUND 34300    // cm per second
 #define TRACT_LENGTH 17.5       // desired tract length in cm
-#define DRAIN_Z 0.1           // acoustic impedance at the opening of the lips
+#define DRAIN_Z 0.1             // acoustic impedence at the opening of the lips
+
+// midi controllers for different functions
+#define CONTROLLER_TONGUE_POSITION 0x15
+#define CONTROLLER_TONGUE_HEIGHT 0x16
+#define CONTROLLER_TRACT_LENGTH 0x17
+
+// controller ranges
+#define CONTROLLER_TRACT_LENGTH_MIN 8
+#define CONTROLLER_TRACT_LENGTH_MAX 24
+#define CONTROLLER_TONGUE_HEIGHT_MIN 0
+#define CONTROLLER_TONGUE_HEIGHT_MAX 1
 
 //#define DEBUG
 
+jack_port_t *midi_input_port;
 jack_port_t *input_port;
 jack_port_t *output_port;
 jack_client_t *client;
@@ -67,7 +80,7 @@ void init_tract(double desired_length) {
     // the actual length
     tract_length = nsegments * unit_length;
 
-    // allocate memory for the segment of the waveguide
+    // allocate memory for the segments of the waveguide
     buffer1 = malloc(sizeof(struct Segment) * nsegments);
     buffer2 = malloc(sizeof(struct Segment) * nsegments);
 
@@ -104,6 +117,25 @@ void init_tract(double desired_length) {
     printf("actual tract length = %fcm\n", tract_length);
     printf("unit length = %fcm\n", unit_length);
     printf("num waveguide segments = %i\n", nsegments);
+}
+
+void resize_tract(double desired_length) {
+    int old_nsegments = nsegments;
+    struct Segment *old1 = buffer1;
+    struct Segment *old2 = buffer2;
+
+    // create a new tract of desired length
+    // then copy over old values to avoid artifacts
+    init_tract(desired_length);
+    int n = old_nsegments < nsegments ? old_nsegments : nsegments;
+    for(int i = 0; i < n; i++) {
+        buffer1[i] = old1[i];
+        buffer2[i] = old2[i];
+    }
+
+    // and free the old tract
+    free(old1);
+    free(old2);
 }
 
 void free_tract() {
@@ -203,13 +235,40 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
     return drain;
 }
 
+// maps a midi controller value to a given range
+double map2range(uint8_t value, double min, double max) {
+    return min + (max - min) * (value / 127.0);
+}
+
 // callback to process a single chunk of audio
 int process(jack_nframes_t nframes, void *arg) {
 
-    // the in buffer and the out buffer
+    // the audio in buffer and the audio out buffer
     jack_default_audio_sample_t *in, *out;
     in = jack_port_get_buffer(input_port, nframes);
     out = jack_port_get_buffer(output_port, nframes);
+
+    // get midi events
+    uint8_t *midi_port_buffer = jack_port_get_buffer(midi_input_port, nframes);
+    jack_midi_event_t event;
+    jack_nframes_t event_count = jack_midi_get_event_count(midi_port_buffer);
+    for(int i = 0; i < event_count; i++) {
+        jack_midi_event_get(&event, midi_port_buffer, i);
+        uint8_t type = event.buffer[0];
+
+        // control signal
+        if(type == 0xb0) {
+            uint8_t id = event.buffer[1];
+            uint8_t value = event.buffer[2];
+            //printf("  midi control change event: 0x%x, 0x%x\n", id, value);
+
+            if(id==CONTROLLER_TRACT_LENGTH) {
+                double desired_length = map2range(value, CONTROLLER_TRACT_LENGTH_MIN, CONTROLLER_TRACT_LENGTH_MAX);
+                resize_tract(desired_length);
+                printf("setting tract length to desired %2.2fcm...actually got %2.2fcm\n", desired_length, tract_length);
+            }
+        }
+    }
 
     // simply copying for now lol
     //memcpy(out, in, sizeof(jack_default_audio_sample_t) * nframes);
@@ -252,6 +311,7 @@ int main(int argc, char **argv) {
     jack_on_shutdown(client, jack_shutdown, 0);
 
     // create in and out port
+    midi_input_port = jack_port_register(client, "tract control", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
     input_port = jack_port_register(client, "glottal source", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
     output_port = jack_port_register(client, "vocal tract output", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
 
@@ -271,6 +331,7 @@ int main(int argc, char **argv) {
 
     // wait........ FOREVER...... (nah just til user say so)
     sleep(-1);
+    free_tract();
     jack_client_close(client);
     return 0;
 }
