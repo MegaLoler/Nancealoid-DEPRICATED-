@@ -23,7 +23,8 @@
 // midi controllers for different functions
 #define CONTROLLER_TONGUE_POSITION 0x15
 #define CONTROLLER_TONGUE_HEIGHT 0x16
-#define CONTROLLER_TRACT_LENGTH 0x17
+#define CONTROLLER_LIPS_ROUNDEDNESS 0x17
+#define CONTROLLER_TRACT_LENGTH 0x18
 
 // controller ranges
 #define CONTROLLER_TRACT_LENGTH_MIN 8
@@ -63,6 +64,7 @@ struct Segment *buffer2;
 // vowel space
 double tongue_height; // closedness
 double tongue_position; // backness
+double lips_roundedness;
 
 // swap buffers by swapping pointers
 void swap_buffers() {
@@ -97,7 +99,7 @@ void update_shape() {
             s->z = THROAT_Z;
         } else if (i >= stop) {
             // front of mouth
-            s->z = NEUTRAL_Z;
+            s->z = 1 / (1 - lips_roundedness + 0.001) * NEUTRAL_Z;
         } else {
             // tongue
             double unit_pos = (i - start) / (double)(ntongue - 1);
@@ -326,6 +328,11 @@ int process(jack_nframes_t nframes, void *arg) {
                 update_shape();
                 printf("setting tongue frontness to %2.2f%%..\n", tongue_position*100);
             }
+            else if(id==CONTROLLER_LIPS_ROUNDEDNESS) {
+                lips_roundedness = map2range(value, 0, 0.9);
+                update_shape();
+                printf("setting lips roundedness to %2.2f%%..\n", lips_roundedness*100);
+            }
         }
     }
 
@@ -382,6 +389,7 @@ int main(int argc, char **argv) {
     // setup the vocal tract
     tongue_height = 0;
     tongue_position = 0.5;
+    lips_roundedness = 0;
     init_tract(TRACT_LENGTH);
 
     // go dude go
