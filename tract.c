@@ -10,11 +10,14 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <math.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
 
 #define SPEED_OF_SOUND 34300    // cm per second
 #define TRACT_LENGTH 17.5       // desired tract length in cm
+#define NEUTRAL_Z 1             // impedence of schwa
+#define THROAT_Z 5              // impedence of throat
 #define DRAIN_Z 0.1             // acoustic impedence at the opening of the lips
 
 // midi controllers for different functions
@@ -25,10 +28,12 @@
 // controller ranges
 #define CONTROLLER_TRACT_LENGTH_MIN 8
 #define CONTROLLER_TRACT_LENGTH_MAX 24
-#define CONTROLLER_TONGUE_HEIGHT_MIN 0
-#define CONTROLLER_TONGUE_HEIGHT_MAX 1
 
-//#define DEBUG
+// tongue start and stop (percentage of tract)
+#define TONGUE_BACK 0.2
+#define TONGUE_FRONT 0.9
+
+//#define DEBUG_TRACT
 
 jack_port_t *midi_input_port;
 jack_port_t *input_port;
@@ -54,6 +59,11 @@ struct Segment *segments_back; // back buffer
 struct Segment *buffer1;
 struct Segment *buffer2;
 
+// tract shape stuff
+// vowel space
+double tongue_height; // closedness
+double tongue_position; // backness
+
 // swap buffers by swapping pointers
 void swap_buffers() {
     if(segments_front == buffer1) {
@@ -62,6 +72,40 @@ void swap_buffers() {
     } else {
         segments_front = buffer1;
         segments_back = buffer2;
+    }
+}
+
+// update the shape of the tract
+// using tongue height and position
+// to approximate vowel sounds in "vowel space"
+void update_shape() {
+    // approximate shape using cosine
+    // position = 0 is all the way back
+    // and 1 = all the way up front
+    
+    // get the start and stopping segments
+    int start = TONGUE_BACK * nsegments;
+    int stop = TONGUE_FRONT * nsegments;
+    int ntongue = stop - start;
+
+    // iterate over all the segments
+    for(int i = 0; i < nsegments; i++) {
+        struct Segment *s = &(segments_front[i]);
+        
+        if(i < start) {
+            // throat
+            s->z = THROAT_Z;
+        } else if (i >= stop) {
+            // front of mouth
+            s->z = NEUTRAL_Z;
+        } else {
+            // tongue
+            double unit_pos = (i - start) / (double)(ntongue - 1);
+            double phase = unit_pos - tongue_position;
+            double value = cos(phase * M_PI / 2) * tongue_height;
+            double unit_area = 1 - value;
+            s->z = 1 / (unit_area + 0.001) * NEUTRAL_Z;
+        }
     }
 }
 
@@ -94,22 +138,25 @@ void init_tract(double desired_length) {
         struct Segment *f = &(segments_front[i]);
         struct Segment *b = &(segments_back[i]);
         // init front buffer
-        f->z = 1;
+        f->z = NEUTRAL_Z;
         f->left = 0;
         f->right = 0;
         // init back buffer
-        b->z = 1;
+        b->z = NEUTRAL_Z;
         b->left = 0;
         b->right = 0;
     }
 
-#ifdef DEBUG
+#ifdef DEBUG_TRACT
     // test impulse
     segments_front->right = 1;
 #endif
 
     // test set the tract shape
-    //segments_front[nsegments-2].z = 0.1;
+    //segments_front[nsegments-2].z = 10/NEUTRAL_Z;
+
+    // init the tract shape
+    update_shape();
 
     // print some INTERESTING INFORMATION,
     printf("rate = %ihz\n", rate);
@@ -129,8 +176,10 @@ void resize_tract(double desired_length) {
     init_tract(desired_length);
     int n = old_nsegments < nsegments ? old_nsegments : nsegments;
     for(int i = 0; i < n; i++) {
-        buffer1[i] = old1[i];
-        buffer2[i] = old2[i];
+        buffer1[i].left = old1[i].left;
+        buffer1[i].right = old1[i].right;
+        buffer2[i].left = old2[i].left;
+        buffer2[i].right = old2[i].right;
     }
 
     // and free the old tract
@@ -225,7 +274,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
     // swap waveguide buffers
     swap_buffers();
 
-#ifdef DEBUG
+#ifdef DEBUG_TRACT
     // list the state of all the segments
     printf("\n\nDEBUG:\n\n");
     debug_tract(segments_front, segments_back);
@@ -266,6 +315,16 @@ int process(jack_nframes_t nframes, void *arg) {
                 double desired_length = map2range(value, CONTROLLER_TRACT_LENGTH_MIN, CONTROLLER_TRACT_LENGTH_MAX);
                 resize_tract(desired_length);
                 printf("setting tract length to desired %2.2fcm...actually got %2.2fcm\n", desired_length, tract_length);
+            }
+            else if(id==CONTROLLER_TONGUE_HEIGHT) {
+                tongue_height = map2range(value, 0, 0.9);
+                update_shape();
+                printf("setting tongue height to %2.2f%%..\n", tongue_height*100);
+            }
+            else if(id==CONTROLLER_TONGUE_POSITION) {
+                tongue_position = map2range(value, 0, 1);
+                update_shape();
+                printf("setting tongue frontness to %2.2f%%..\n", tongue_position*100);
             }
         }
     }
@@ -321,6 +380,8 @@ int main(int argc, char **argv) {
     }
 
     // setup the vocal tract
+    tongue_height = 0;
+    tongue_position = 0.5;
     init_tract(TRACT_LENGTH);
 
     // go dude go

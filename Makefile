@@ -1,5 +1,5 @@
 tract: tract.c
-	gcc tract.c -ljack -Wall -o tract
+	gcc tract.c -ljack -lm -Wall -o tract
 
 clean: tract
 	rm tract
