@@ -34,6 +34,9 @@
 #define TONGUE_BACK 0.2
 #define TONGUE_FRONT 0.9
 
+// how fast to sitch between phonemes
+#define INTERPOLATION_DRAG 0.0007
+
 //#define DEBUG_TRACT
 
 jack_port_t *midi_input_port;
@@ -60,11 +63,29 @@ struct Segment *segments_back; // back buffer
 struct Segment *buffer1;
 struct Segment *buffer2;
 
-// tract shape stuff
-// vowel space
-double tongue_height; // closedness
-double tongue_position; // backness
-double lips_roundedness;
+// represents a shape of the mouth to produce a certain sound
+struct Phoneme {
+    // tract shape stuff
+    // vowel space
+    double tongue_height; // closedness
+    double tongue_position; // backness
+    double lips_roundedness;
+};
+
+// SOME PHONEMES
+struct Phoneme PHONEME_A = { 0.9, 0, 0 };
+
+// phoneme to return to
+// controlled freely by midi control signals
+struct Phoneme ambient_phoneme;
+
+// target phoneme
+// point it to what you want the phoneme to be
+// simulation will interpolate towards it
+struct Phoneme *target_phoneme;
+
+// represents the ACTUAL CURRENT INSTANT shape of the mouth
+struct Phoneme current_phoneme;
 
 // swap buffers by swapping pointers
 void swap_buffers() {
@@ -99,12 +120,12 @@ void update_shape() {
             s->z = THROAT_Z;
         } else if (i >= stop) {
             // front of mouth
-            s->z = 1 / (1 - lips_roundedness + 0.001) * NEUTRAL_Z;
+            s->z = 1 / (1 - current_phoneme.lips_roundedness + 0.001) * NEUTRAL_Z;
         } else {
             // tongue
             double unit_pos = (i - start) / (double)(ntongue - 1);
-            double phase = unit_pos - tongue_position;
-            double value = cos(phase * M_PI / 2) * tongue_height;
+            double phase = unit_pos - current_phoneme.tongue_position;
+            double value = cos(phase * M_PI / 2) * current_phoneme.tongue_height;
             double unit_area = 1 - value;
             s->z = 1 / (unit_area + 0.001) * NEUTRAL_Z;
         }
@@ -276,6 +297,15 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
     // swap waveguide buffers
     swap_buffers();
 
+    // update current phoneme torward target phoneme
+    current_phoneme.tongue_position +=
+        (target_phoneme->tongue_position - current_phoneme.tongue_position) * INTERPOLATION_DRAG;
+    current_phoneme.tongue_height +=
+        (target_phoneme->tongue_height - current_phoneme.tongue_height) * INTERPOLATION_DRAG;
+    current_phoneme.lips_roundedness +=
+        (target_phoneme->lips_roundedness - current_phoneme.lips_roundedness) * INTERPOLATION_DRAG;
+    update_shape();
+
 #ifdef DEBUG_TRACT
     // list the state of all the segments
     printf("\n\nDEBUG:\n\n");
@@ -319,19 +349,19 @@ int process(jack_nframes_t nframes, void *arg) {
                 printf("setting tract length to desired %2.2fcm...actually got %2.2fcm\n", desired_length, tract_length);
             }
             else if(id==CONTROLLER_TONGUE_HEIGHT) {
-                tongue_height = map2range(value, 0, 0.9);
-                update_shape();
-                printf("setting tongue height to %2.2f%%..\n", tongue_height*100);
+                ambient_phoneme.tongue_height = map2range(value, 0, 0.9);
+                //update_shape();
+                printf("setting ambient tongue height to %2.2f%%..\n", ambient_phoneme.tongue_height*100);
             }
             else if(id==CONTROLLER_TONGUE_POSITION) {
-                tongue_position = map2range(value, 0, 1);
-                update_shape();
-                printf("setting tongue frontness to %2.2f%%..\n", tongue_position*100);
+                ambient_phoneme.tongue_position = map2range(value, 0, 1);
+                //update_shape();
+                printf("setting ambient tongue frontness to %2.2f%%..\n", ambient_phoneme.tongue_position*100);
             }
             else if(id==CONTROLLER_LIPS_ROUNDEDNESS) {
-                lips_roundedness = map2range(value, 0, 0.9);
-                update_shape();
-                printf("setting lips roundedness to %2.2f%%..\n", lips_roundedness*100);
+                ambient_phoneme.lips_roundedness = map2range(value, 0, 0.9);
+                //update_shape();
+                printf("setting ambient lips roundedness to %2.2f%%..\n", ambient_phoneme.lips_roundedness*100);
             }
         }
     }
@@ -387,9 +417,11 @@ int main(int argc, char **argv) {
     }
 
     // setup the vocal tract
-    tongue_height = 0;
-    tongue_position = 0.5;
-    lips_roundedness = 0;
+    ambient_phoneme.tongue_height = 0;
+    ambient_phoneme.tongue_position = 0.5;
+    ambient_phoneme.lips_roundedness = 0;
+    target_phoneme = &ambient_phoneme;
+    current_phoneme = ambient_phoneme;
     init_tract(TRACT_LENGTH);
 
     // go dude go
