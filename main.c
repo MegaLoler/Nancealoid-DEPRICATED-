@@ -19,7 +19,7 @@
 #define NEUTRAL_Z 1             // impedence of schwa
 #define THROAT_Z 5              // impedence of throat
 #define DRAIN_Z 0.1             // acoustic impedence at the opening of the lips
-#define MIN_AREA 0.000001         // to avoid divisions by 0 lol
+#define MIN_AREA 0.000001       // to avoid divisions by 0 lol
 
 // midi controllers for different functions
 #define CONTROLLER_TONGUE_POSITION 0x15
@@ -44,7 +44,7 @@
 double interpolation_drag;
 
 // min and max air pressure from the diaphram
-#define MIN_DIAPHRAM_PRESSURE -0.1
+#define MIN_DIAPHRAM_PRESSURE 0
 #define MAX_DIAPHRAM_PRESSURE 0.1
 
 // how much acoustic energy is absorbed in collisions
@@ -310,7 +310,8 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             // also mix in the glottal source
             // normalize source for drain impedence
             double gamma = 1-reflection(DRAIN_Z, old->z);
-            new->right += old->left * (1-DAMPING) + glottal_source * gamma;
+            // TODO: only apply diaphram pressure when notes are playing
+            new->right += old->left * (1-DAMPING) + glottal_source * gamma + MAX_DIAPHRAM_PRESSURE;
         } else {
             // otherwise the new right moving energy is right moving energy to the old left
             struct Segment *old_left = &(segments_front[i-1]);
@@ -395,8 +396,8 @@ int process(jack_nframes_t nframes, void *arg) {
                 printf("setting tract length to desired %2.2fcm...actually got %2.2fcm\n", desired_length, tract_length);
             }
             else if(id==CONTROLLER_TONGUE_HEIGHT) {
-                ambient_phoneme.tongue_height = map2range(value, 0, 0.9);
-                //ambient_phoneme.tongue_height = map2range(value, 0, 1);
+                //ambient_phoneme.tongue_height = map2range(value, 0, 0.9);
+                ambient_phoneme.tongue_height = map2range(value, 0, 1);
                 //update_shape();
                 printf("setting ambient tongue height to %2.2f%%..\n", ambient_phoneme.tongue_height*100);
             }
@@ -406,8 +407,8 @@ int process(jack_nframes_t nframes, void *arg) {
                 printf("setting ambient tongue frontness to %2.2f%%..\n", ambient_phoneme.tongue_position*100);
             }
             else if(id==CONTROLLER_LIPS_ROUNDEDNESS) {
-                ambient_phoneme.lips_roundedness = map2range(value, 0, 0.9);
-                //ambient_phoneme.lips_roundedness = map2range(value, 0, 1);
+                //ambient_phoneme.lips_roundedness = map2range(value, 0, 0.9);
+                ambient_phoneme.lips_roundedness = map2range(value, 0, 1);
                 //update_shape();
                 printf("setting ambient lips roundedness to %2.2f%%..\n", ambient_phoneme.lips_roundedness*100);
             }
@@ -432,6 +433,11 @@ int process(jack_nframes_t nframes, void *arg) {
             printf("  [chan %02d] midi note ON:  0x%x, 0x%x\n", chan, note, velocity);
             //target_phoneme = get_mapped_phoneme(note);
             ambient_phoneme = *get_mapped_phoneme(note);
+
+            //// TMP: insert plosive transient
+            //if(note == 0x30) {
+            //    segments_front[nsegments-1].right += MAX_DIAPHRAM_PRESSURE;
+            //}
         }
     }
 
