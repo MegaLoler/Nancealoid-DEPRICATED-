@@ -10,30 +10,18 @@ type `make` duh
 
 u need jack audio server running
 
-the `tract` program simulates the resonant filtering of the vocal tract
-
-the `glottis` program simulates a glottal pulse train
-
-u might want to route the audio like this:
-glottis -> tract -> system out
+rn doesnt actually produce a sound source so u need to route one in (preferably a sawtooth-like wave if nothin better)
 
 
-gonna make `glottis` accept midi input for playing notes
 
-and probably make `tract` accept midi control signals for changing the shape of the tract
 
-eventually it'd b cool to assign midi notes on channel 10 to preset vocal tract shapes corresponding to different phonemes
-
-also a visualizer wld b cool
+a visualizer would be cool eventually
 
 
 
 
 
 
-
-probably gonna rearchitecture this whole thing!!
-merge them into one program
 
 
 need to figure out how to simulation plosion and frication
