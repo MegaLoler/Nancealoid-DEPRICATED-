@@ -27,6 +27,7 @@
 #define CONTROLLER_LIPS_ROUNDEDNESS 0x17
 #define CONTROLLER_TRACT_LENGTH 0x18
 #define CONTROLLER_DRAG 0x19
+#define CONTROLLER_PRESSURE 0x1a
 
 // controller ranges
 #define CONTROLLER_TRACT_LENGTH_MIN 8
@@ -43,12 +44,17 @@
 
 double interpolation_drag;
 
-// min and max air pressure from the diaphram
-#define MIN_DIAPHRAM_PRESSURE 0
-#define MAX_DIAPHRAM_PRESSURE 0.1
+// min and max continuous air pressure from the lungs
+#define MIN_DIAPHRAM_PRESSURE -0.05
+#define MAX_DIAPHRAM_PRESSURE 0.05
+
+double diaphram_pressure;
 
 // how much acoustic energy is absorbed in collisions
 #define DAMPING 0.04
+
+// frication multiplier
+#define FRICATION 0.5
 
 // which midi channel to use to map notes to phonemes
 #define PHONEME_CHANNEL 0x9
@@ -276,6 +282,11 @@ double reflection(double source_z, double target_z) {
     return (target_z - source_z) / (target_z + source_z);
 }
 
+// generate noise
+double noise() {
+    return rand() / (RAND_MAX / 2.0) - 1;
+}
+
 // run the vocal tract for the length of a single sample
 // given the sample for the glottal source
 // return the tract out
@@ -310,16 +321,22 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             // also mix in the glottal source
             // normalize source for drain impedence
             double gamma = 1-reflection(DRAIN_Z, old->z);
-            // TODO: only apply diaphram pressure when notes are playing
-            new->right += old->left * (1-DAMPING) + glottal_source * gamma + MAX_DIAPHRAM_PRESSURE;
+            new->right += old->left * (1-DAMPING) + glottal_source * gamma + diaphram_pressure;
         } else {
             // otherwise the new right moving energy is right moving energy to the old left
             struct Segment *old_left = &(segments_front[i-1]);
             struct Segment *new_left = &(segments_back[i-1]);
             double gamma = reflection(old_left->z, old->z);
+
             jack_default_audio_sample_t reflection = old_left->right * gamma;
             new->right += old_left->right - reflection;
             new_left->left += reflection * (1-DAMPING);
+            
+            // frication
+            // due to wind hitting obstruction (increase in impedence)
+            double velocity = reflection;
+            if (velocity < 0) velocity = 0;
+            new_left->left += FRICATION * velocity * noise();
         }
 
         // process audio moving left (towarard glottis)
@@ -337,6 +354,12 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             jack_default_audio_sample_t reflection = old_right->left * gamma;
             new->left += old_right->left - reflection;
             new_right->right += reflection * (1-DAMPING);
+
+            // frication
+            // due to wind hitting obstruction (increase in impedence)
+            double velocity = reflection;
+            if (velocity < 0) velocity = 0;
+            new_right->right += FRICATION * velocity * noise();
         }
     }
 
@@ -416,6 +439,10 @@ int process(jack_nframes_t nframes, void *arg) {
                 interpolation_drag = map2range(value, DRAG_MIN, DRAG_MAX);
                 printf("setting interpolation drag to %.5f..\n", interpolation_drag);
             }
+            else if(id==CONTROLLER_PRESSURE) {
+                diaphram_pressure = map2range(value, MIN_DIAPHRAM_PRESSURE, MAX_DIAPHRAM_PRESSURE);
+                printf("setting continuous air pressure from lungs drag to %.2f..\n", diaphram_pressure);
+            }
         }
         else if(type == 0x80 && chan == PHONEME_CHANNEL) {
             //uint8_t note = event.buffer[1];
@@ -436,7 +463,7 @@ int process(jack_nframes_t nframes, void *arg) {
 
             //// TMP: insert plosive transient
             //if(note == 0x30) {
-            //    segments_front[nsegments-1].right += MAX_DIAPHRAM_PRESSURE;
+            //    segments_front[nsegments-1].right += diaphram_pressure;
             //}
         }
     }
@@ -498,6 +525,7 @@ int main(int argc, char **argv) {
     target_phoneme = &ambient_phoneme;
     current_phoneme = ambient_phoneme;
     interpolation_drag = DEFAULT_INTERPOLATION_DRAG;
+    diaphram_pressure = 0;
     init_tract(TRACT_LENGTH);
 
     // go dude go
