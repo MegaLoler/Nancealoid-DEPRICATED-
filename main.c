@@ -28,6 +28,7 @@
 #define CONTROLLER_TRACT_LENGTH 0x18
 #define CONTROLLER_DRAG 0x19
 #define CONTROLLER_PRESSURE 0x1a
+#define CONTROLLER_DAMPING 0x1b
 
 // controller ranges
 #define CONTROLLER_TRACT_LENGTH_MIN 8
@@ -45,16 +46,20 @@
 double interpolation_drag;
 
 // min and max continuous air pressure from the lungs
-#define MIN_DIAPHRAM_PRESSURE -0.05
-#define MAX_DIAPHRAM_PRESSURE 0.05
+#define MIN_DIAPHRAM_PRESSURE -0.2
+#define MAX_DIAPHRAM_PRESSURE 0.2
 
 double diaphram_pressure;
 
 // how much acoustic energy is absorbed in collisions
-#define DAMPING 0.04
+#define DEFAULT_DAMPING 0.04
+#define MIN_DAMPING 0
+#define MAX_DAMPING 0.2
+
+double damping;
 
 // frication multiplier
-#define FRICATION 0.5
+#define FRICATION 0.1
 
 // which midi channel to use to map notes to phonemes
 #define PHONEME_CHANNEL 0x9
@@ -321,7 +326,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             // also mix in the glottal source
             // normalize source for drain impedence
             double gamma = 1-reflection(DRAIN_Z, old->z);
-            new->right += old->left * (1-DAMPING) + glottal_source * gamma + diaphram_pressure;
+            new->right += old->left * (1-damping) + glottal_source * gamma + diaphram_pressure;
         } else {
             // otherwise the new right moving energy is right moving energy to the old left
             struct Segment *old_left = &(segments_front[i-1]);
@@ -330,7 +335,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
 
             jack_default_audio_sample_t reflection = old_left->right * gamma;
             new->right += old_left->right - reflection;
-            new_left->left += reflection * (1-DAMPING);
+            new_left->left += reflection * (1-damping);
             
             // frication
             // due to wind hitting obstruction (increase in impedence)
@@ -345,7 +350,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double gamma = reflection(old->z, DRAIN_Z);
             jack_default_audio_sample_t reflection = old->right * gamma;
             drain = old->right - reflection;
-            new->left += reflection * (1-DAMPING);
+            new->left += reflection * (1-damping);
         } else {
             // otherwise the new left moving energy is left moving energy to the old right
             struct Segment *old_right = &(segments_front[i+1]);
@@ -353,7 +358,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double gamma = reflection(old_right->z, old->z);
             jack_default_audio_sample_t reflection = old_right->left * gamma;
             new->left += old_right->left - reflection;
-            new_right->right += reflection * (1-DAMPING);
+            new_right->right += reflection * (1-damping);
 
             // frication
             // due to wind hitting obstruction (increase in impedence)
@@ -441,7 +446,11 @@ int process(jack_nframes_t nframes, void *arg) {
             }
             else if(id==CONTROLLER_PRESSURE) {
                 diaphram_pressure = map2range(value, MIN_DIAPHRAM_PRESSURE, MAX_DIAPHRAM_PRESSURE);
-                printf("setting continuous air pressure from lungs drag to %.2f..\n", diaphram_pressure);
+                printf("setting continuous air pressure from lungs to %.2f..\n", diaphram_pressure);
+            }
+            else if(id==CONTROLLER_DAMPING) {
+                damping = map2range(value, MIN_DAMPING, MAX_DAMPING);
+                printf("setting damping to %.3f..\n", damping);
             }
         }
         else if(type == 0x80 && chan == PHONEME_CHANNEL) {
@@ -526,6 +535,7 @@ int main(int argc, char **argv) {
     current_phoneme = ambient_phoneme;
     interpolation_drag = DEFAULT_INTERPOLATION_DRAG;
     diaphram_pressure = 0;
+    damping = DEFAULT_DAMPING;
     init_tract(TRACT_LENGTH);
 
     // go dude go
