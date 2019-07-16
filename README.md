@@ -2,6 +2,8 @@
 
 Negative Nancy's Voice Synthesizer!
 
+check out `choir.mp3` for a dumb example of what it sonuds like rn lol
+
 # how 2 make
 
 type `make` duh
