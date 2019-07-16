@@ -61,6 +61,14 @@ double damping;
 // frication multiplier
 #define FRICATION 0.1
 
+// TODO: make this actuall work lol NEED ME SOME TRILLS
+// so like, sound pressure can actually reshape the tract
+// and it will oscillate
+// this is the damping factor
+#define PHYSICAL_DAMPING 1
+// and how rigid various parts are
+#define LIPS_RIGIDITY 1
+
 // which midi channel to use to map notes to phonemes
 #define PHONEME_CHANNEL 0x9
 
@@ -74,6 +82,8 @@ jack_client_t *client;
 // a waveguide segment
 struct Segment {
     double z; // acoustic impedence at this segment (inverse of cross sectional area (i think lol))
+    double target_z; // where it wants to be
+    double rigidity; // 1 = will not move at all
     jack_default_audio_sample_t left; // acoustic energy traveling left
     jack_default_audio_sample_t right; // acoustic energy traveling left
 };
@@ -157,7 +167,7 @@ void swap_buffers() {
 // update the shape of the tract
 // using tongue height and position
 // to approximate vowel sounds in "vowel space"
-void update_shape() {
+void update_shape(int set_z) {
     // approximate shape using cosine
     // position = 0 is all the way back
     // and 1 = all the way up front
@@ -173,18 +183,21 @@ void update_shape() {
         
         if(i < start) {
             // throat
-            s->z = THROAT_Z;
+            s->target_z = THROAT_Z;
         } else if (i >= stop) {
             // front of mouth
-            s->z = 1 / (1 - current_phoneme.lips_roundedness + MIN_AREA) * NEUTRAL_Z;
+            s->target_z = 1 / (1 - current_phoneme.lips_roundedness + MIN_AREA) * NEUTRAL_Z;
+            s->rigidity = LIPS_RIGIDITY;
         } else {
             // tongue
             double unit_pos = (i - start) / (double)(ntongue - 1);
             double phase = unit_pos - current_phoneme.tongue_position;
             double value = cos(phase * M_PI / 2) * current_phoneme.tongue_height;
             double unit_area = 1 - value;
-            s->z = 1 / (unit_area + MIN_AREA) * NEUTRAL_Z;
+            s->target_z = 1 / (unit_area + MIN_AREA) * NEUTRAL_Z;
         }
+        if(set_z)
+            s->z = s->target_z;
     }
 }
 
@@ -218,10 +231,14 @@ void init_tract(double desired_length) {
         struct Segment *b = &(segments_back[i]);
         // init front buffer
         f->z = NEUTRAL_Z;
+        f->target_z = NEUTRAL_Z;
+        f->rigidity = 1;
         f->left = 0;
         f->right = 0;
         // init back buffer
         b->z = NEUTRAL_Z;
+        b->target_z = NEUTRAL_Z;
+        b->rigidity = 1;
         b->left = 0;
         b->right = 0;
     }
@@ -229,13 +246,15 @@ void init_tract(double desired_length) {
 #ifdef DEBUG_TRACT
     // test impulse
     segments_front->right = 1;
+    ambient_phoneme.lips_roundedness = 1;
+    current_phoneme.lips_roundedness = 1;
 #endif
 
     // test set the tract shape
     //segments_front[nsegments-2].z = 10/NEUTRAL_Z;
 
     // init the tract shape
-    update_shape();
+    update_shape(1);
 
     // print some INTERESTING INFORMATION,
     printf("rate = %ihz\n", rate);
@@ -277,7 +296,7 @@ void debug_tract(struct Segment *front, struct Segment *back) {
     for(int i = 0; i < nsegments; i++) {
         struct Segment f = front[i];
         struct Segment b = back[i];
-        printf("SEG#%02d:\tZ=%2.2f\t\tL=%2.2f\tR=%2.2f\t\tL=%2.2f\tR=%2.2f\n", i, f.z, f.left, f.right, b.left, b.right);
+        printf("SEG#%02d:\tZ=%2.2f\tTZ=%2.2f\tR=%2.2f\t\tL=%2.2f\tR=%2.2f\t\tL=%2.2f\tR=%2.2f\n", i, f.z, f.target_z, f.rigidity, f.left, f.right, b.left, b.right);
     }
 }
 
@@ -309,9 +328,18 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
     for(int i = 0; i < nsegments; i++) {
         struct Segment *old = &(segments_front[i]);
         struct Segment *new = &(segments_back[i]);
-        new->z = old->z;
+        new->target_z = old->target_z;
+        new->rigidity = old->rigidity;
         new->left = 0;
         new->right = 0;
+        
+        // calculate physical deformations
+        double old_area = 1 / old->z;
+        double target_area = 1 / new->target_z;
+        double delta = target_area - old_area;
+        double new_area = old_area + delta * PHYSICAL_DAMPING;
+        if (new_area < 0) new_area = MIN_AREA;
+        new->z = 1 / new_area;
     }
 
     // process each segment
@@ -319,10 +347,13 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
         struct Segment *old = &(segments_front[i]);
         struct Segment *new = &(segments_back[i]);
 
+        // physical compression of the tract walls due to sound pressure
+        double area = 1/new->z;
+
         // process audio moving right (toward lips)
         // if i == 0 then this is at the glottis
         if(i == 0) {
-            // make the glottis reflect all sound with no loss
+            // make the glottis reflect all sound
             // also mix in the glottal source
             // normalize source for drain impedence
             double gamma = 1-reflection(DRAIN_Z, old->z);
@@ -342,6 +373,11 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double velocity = reflection;
             if (velocity < 0) velocity = 0;
             new_left->left += FRICATION * velocity * noise();
+
+            // physical compression of the tract walls due to sound pressure
+            //double tmp = area;
+            area += reflection * (1-old->rigidity);
+            //printf("%f->%f, %f, %f\n", tmp, area, reflection, old->rigidity);
         }
 
         // process audio moving left (towarard glottis)
@@ -351,6 +387,10 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             jack_default_audio_sample_t reflection = old->right * gamma;
             drain = old->right - reflection;
             new->left += reflection * (1-damping);
+
+            // physical compression of the tract walls due to sound pressure
+            area += reflection * (1-old->rigidity);
+
         } else {
             // otherwise the new left moving energy is left moving energy to the old right
             struct Segment *old_right = &(segments_front[i+1]);
@@ -365,7 +405,14 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double velocity = reflection;
             if (velocity < 0) velocity = 0;
             new_right->right += FRICATION * velocity * noise();
+
+            // physical compression of the tract walls due to sound pressure
+            area += reflection * (1-old->rigidity);
         }
+
+        // physical compression of the tract walls due to sound pressure
+        if (area < 0) area = MIN_AREA;
+        new->z = 1/area;
     }
 
     // swap waveguide buffers
@@ -378,7 +425,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
         (target_phoneme->tongue_height - current_phoneme.tongue_height) * interpolation_drag;
     current_phoneme.lips_roundedness +=
         (target_phoneme->lips_roundedness - current_phoneme.lips_roundedness) * interpolation_drag;
-    update_shape();
+    update_shape(0);
 
 #ifdef DEBUG_TRACT
     // list the state of all the segments
@@ -426,18 +473,18 @@ int process(jack_nframes_t nframes, void *arg) {
             else if(id==CONTROLLER_TONGUE_HEIGHT) {
                 //ambient_phoneme.tongue_height = map2range(value, 0, 0.9);
                 ambient_phoneme.tongue_height = map2range(value, 0, 1);
-                //update_shape();
+                //update_shape(1);
                 printf("setting ambient tongue height to %2.2f%%..\n", ambient_phoneme.tongue_height*100);
             }
             else if(id==CONTROLLER_TONGUE_POSITION) {
                 ambient_phoneme.tongue_position = map2range(value, 0, 1);
-                //update_shape();
+                //update_shape(1);
                 printf("setting ambient tongue frontness to %2.2f%%..\n", ambient_phoneme.tongue_position*100);
             }
             else if(id==CONTROLLER_LIPS_ROUNDEDNESS) {
                 //ambient_phoneme.lips_roundedness = map2range(value, 0, 0.9);
                 ambient_phoneme.lips_roundedness = map2range(value, 0, 1);
-                //update_shape();
+                //update_shape(1);
                 printf("setting ambient lips roundedness to %2.2f%%..\n", ambient_phoneme.lips_roundedness*100);
             }
             else if(id==CONTROLLER_DRAG) {
