@@ -25,6 +25,7 @@
 #define CONTROLLER_TONGUE_HEIGHT 0x16
 #define CONTROLLER_LIPS_ROUNDEDNESS 0x17
 #define CONTROLLER_TRACT_LENGTH 0x18
+#define CONTROLLER_DRAG 0x19
 
 // controller ranges
 #define CONTROLLER_TRACT_LENGTH_MIN 8
@@ -35,7 +36,14 @@
 #define TONGUE_FRONT 0.9
 
 // how fast to sitch between phonemes
-#define INTERPOLATION_DRAG 0.0007
+#define DEFAULT_INTERPOLATION_DRAG 0.0004
+#define DRAG_MIN 0.001
+#define DRAG_MAX 0.0001
+
+double interpolation_drag;
+
+// which midi channel to use to map notes to phonemes
+#define PHONEME_CHANNEL 0x9
 
 //#define DEBUG_TRACT
 
@@ -74,6 +82,16 @@ struct Phoneme {
 
 // SOME PHONEMES
 struct Phoneme PHONEME_A = { 0.9, 0, 0 };
+struct Phoneme PHONEME_I = { 0.9, 1, 0 };
+struct Phoneme PHONEME_U = { 0, 0, 0.9 };
+struct Phoneme PHONEME_E = { 0.9, 0.5, 0 };
+struct Phoneme PHONEME_O = { 0.9, 0.25, 0.9 };
+struct Phoneme PHONEME_SCHWA = { 0, 0, 0 };
+struct Phoneme PHONEME_UH = { 0.7, 0, 0.6 };
+struct Phoneme PHONEME_AH = { 0.7, 0, 0 };
+struct Phoneme PHONEME_UE = { 0.9, 1, 0.9 };
+struct Phoneme PHONEME_II = { 0.9, 0.75, 0 };
+struct Phoneme PHONEME_OE = { 0, 0, 0.75 };
 
 // phoneme to return to
 // controlled freely by midi control signals
@@ -86,6 +104,25 @@ struct Phoneme *target_phoneme;
 
 // represents the ACTUAL CURRENT INSTANT shape of the mouth
 struct Phoneme current_phoneme;
+
+// return a pointer to a phoneme that is mapped to a midi note value
+struct Phoneme *get_mapped_phoneme(uint8_t note) {
+    // TODO: better means of mapping lol
+    switch(note){
+        case 0x24: return &PHONEME_A;
+        case 0x25: return &PHONEME_I;
+        case 0x26: return &PHONEME_U;
+        case 0x27: return &PHONEME_E;
+        case 0x28: return &PHONEME_O;
+        case 0x29: return &PHONEME_SCHWA;
+        case 0x2a: return &PHONEME_UH;
+        case 0x2b: return &PHONEME_AH;
+        case 0x2c: return &PHONEME_UE;
+        case 0x2d: return &PHONEME_II;
+        case 0x2e: return &PHONEME_OE;
+        default: return &ambient_phoneme;
+    }
+}
 
 // swap buffers by swapping pointers
 void swap_buffers() {
@@ -299,11 +336,11 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
 
     // update current phoneme torward target phoneme
     current_phoneme.tongue_position +=
-        (target_phoneme->tongue_position - current_phoneme.tongue_position) * INTERPOLATION_DRAG;
+        (target_phoneme->tongue_position - current_phoneme.tongue_position) * interpolation_drag;
     current_phoneme.tongue_height +=
-        (target_phoneme->tongue_height - current_phoneme.tongue_height) * INTERPOLATION_DRAG;
+        (target_phoneme->tongue_height - current_phoneme.tongue_height) * interpolation_drag;
     current_phoneme.lips_roundedness +=
-        (target_phoneme->lips_roundedness - current_phoneme.lips_roundedness) * INTERPOLATION_DRAG;
+        (target_phoneme->lips_roundedness - current_phoneme.lips_roundedness) * interpolation_drag;
     update_shape();
 
 #ifdef DEBUG_TRACT
@@ -335,7 +372,8 @@ int process(jack_nframes_t nframes, void *arg) {
     jack_nframes_t event_count = jack_midi_get_event_count(midi_port_buffer);
     for(int i = 0; i < event_count; i++) {
         jack_midi_event_get(&event, midi_port_buffer, i);
-        uint8_t type = event.buffer[0];
+        uint8_t type = event.buffer[0] & 0xf0;
+        uint8_t chan = event.buffer[0] & 0x0f;
 
         // control signal
         if(type == 0xb0) {
@@ -363,6 +401,27 @@ int process(jack_nframes_t nframes, void *arg) {
                 //update_shape();
                 printf("setting ambient lips roundedness to %2.2f%%..\n", ambient_phoneme.lips_roundedness*100);
             }
+            else if(id==CONTROLLER_DRAG) {
+                interpolation_drag = map2range(value, DRAG_MIN, DRAG_MAX);
+                printf("setting interpolation drag to %.5f..\n", interpolation_drag);
+            }
+        }
+        else if(type == 0x80 && chan == PHONEME_CHANNEL) {
+            //uint8_t note = event.buffer[1];
+            //uint8_t velocity = event.buffer[2];
+            //printf("  [chan %02d] midi note OFF: 0x%x, 0x%x\n", chan, note, velocity);
+            //struct Phoneme *phoneme = get_mapped_phoneme(note);
+            //if (target_phoneme == phoneme) {
+            //    // TODO: a stack of notes to return to
+            //    target_phoneme = &ambient_phoneme;
+            //}
+        }
+        else if(type == 0x90 && chan == PHONEME_CHANNEL) {
+            uint8_t note = event.buffer[1];
+            uint8_t velocity = event.buffer[2];
+            printf("  [chan %02d] midi note ON:  0x%x, 0x%x\n", chan, note, velocity);
+            //target_phoneme = get_mapped_phoneme(note);
+            ambient_phoneme = *get_mapped_phoneme(note);
         }
     }
 
@@ -422,6 +481,7 @@ int main(int argc, char **argv) {
     ambient_phoneme.lips_roundedness = 0;
     target_phoneme = &ambient_phoneme;
     current_phoneme = ambient_phoneme;
+    interpolation_drag = DEFAULT_INTERPOLATION_DRAG;
     init_tract(TRACT_LENGTH);
 
     // go dude go
