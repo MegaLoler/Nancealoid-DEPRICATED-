@@ -446,7 +446,7 @@ int process(jack_nframes_t nframes, void *arg) {
             }
             else if(id==CONTROLLER_PRESSURE) {
                 diaphram_pressure = map2range(value, MIN_DIAPHRAM_PRESSURE, MAX_DIAPHRAM_PRESSURE);
-                printf("setting continuous air pressure from lungs to %.2f..\n", diaphram_pressure);
+                printf("setting continuous air pressure from lungs to %.3f..\n", diaphram_pressure);
             }
             else if(id==CONTROLLER_DAMPING) {
                 damping = map2range(value, MIN_DAMPING, MAX_DAMPING);
