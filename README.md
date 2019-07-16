@@ -25,3 +25,17 @@ and probably make `tract` accept midi control signals for changing the shape of 
 eventually it'd b cool to assign midi notes on channel 10 to preset vocal tract shapes corresponding to different phonemes
 
 also a visualizer wld b cool
+
+
+
+
+
+
+
+probably gonna rearchitecture this whole thing!!
+merge them into one program
+
+
+need to figure out how to simulation plosion and frication
+also need to add nasal cavity
+also need to make tract length vary slightly with pitch! since the larynx MOVES

@@ -19,6 +19,7 @@
 #define NEUTRAL_Z 1             // impedence of schwa
 #define THROAT_Z 5              // impedence of throat
 #define DRAIN_Z 0.1             // acoustic impedence at the opening of the lips
+#define MIN_AREA 0.000001         // to avoid divisions by 0 lol
 
 // midi controllers for different functions
 #define CONTROLLER_TONGUE_POSITION 0x15
@@ -157,14 +158,14 @@ void update_shape() {
             s->z = THROAT_Z;
         } else if (i >= stop) {
             // front of mouth
-            s->z = 1 / (1 - current_phoneme.lips_roundedness + 0.001) * NEUTRAL_Z;
+            s->z = 1 / (1 - current_phoneme.lips_roundedness + MIN_AREA) * NEUTRAL_Z;
         } else {
             // tongue
             double unit_pos = (i - start) / (double)(ntongue - 1);
             double phase = unit_pos - current_phoneme.tongue_position;
             double value = cos(phase * M_PI / 2) * current_phoneme.tongue_height;
             double unit_area = 1 - value;
-            s->z = 1 / (unit_area + 0.001) * NEUTRAL_Z;
+            s->z = 1 / (unit_area + MIN_AREA) * NEUTRAL_Z;
         }
     }
 }
@@ -388,6 +389,7 @@ int process(jack_nframes_t nframes, void *arg) {
             }
             else if(id==CONTROLLER_TONGUE_HEIGHT) {
                 ambient_phoneme.tongue_height = map2range(value, 0, 0.9);
+                //ambient_phoneme.tongue_height = map2range(value, 0, 1);
                 //update_shape();
                 printf("setting ambient tongue height to %2.2f%%..\n", ambient_phoneme.tongue_height*100);
             }
@@ -398,6 +400,7 @@ int process(jack_nframes_t nframes, void *arg) {
             }
             else if(id==CONTROLLER_LIPS_ROUNDEDNESS) {
                 ambient_phoneme.lips_roundedness = map2range(value, 0, 0.9);
+                //ambient_phoneme.lips_roundedness = map2range(value, 0, 1);
                 //update_shape();
                 printf("setting ambient lips roundedness to %2.2f%%..\n", ambient_phoneme.lips_roundedness*100);
             }
