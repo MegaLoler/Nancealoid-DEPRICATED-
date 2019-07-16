@@ -1,8 +1,8 @@
 /*
- * nancealoid tract
+ * nancealoid
  *
  * this program simulates a vocal tract using a 1d digital waveguide
- * takes an audio input source and filters it through the tract
+ * produces a glottal pulse train that is filtered by the tract
  * outputs the result
  */
 
@@ -42,6 +42,13 @@
 #define DRAG_MAX 0.0001
 
 double interpolation_drag;
+
+// min and max air pressure from the diaphram
+#define MIN_DIAPHRAM_PRESSURE -0.1
+#define MAX_DIAPHRAM_PRESSURE 0.1
+
+// how much acoustic energy is absorbed in collisions
+#define DAMPING 0.04
 
 // which midi channel to use to map notes to phonemes
 #define PHONEME_CHANNEL 0x9
@@ -303,7 +310,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             // also mix in the glottal source
             // normalize source for drain impedence
             double gamma = 1-reflection(DRAIN_Z, old->z);
-            new->right += old->left + glottal_source * gamma;
+            new->right += old->left * (1-DAMPING) + glottal_source * gamma;
         } else {
             // otherwise the new right moving energy is right moving energy to the old left
             struct Segment *old_left = &(segments_front[i-1]);
@@ -311,7 +318,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double gamma = reflection(old_left->z, old->z);
             jack_default_audio_sample_t reflection = old_left->right * gamma;
             new->right += old_left->right - reflection;
-            new_left->left += reflection;
+            new_left->left += reflection * (1-DAMPING);
         }
 
         // process audio moving left (towarard glottis)
@@ -320,7 +327,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double gamma = reflection(old->z, DRAIN_Z);
             jack_default_audio_sample_t reflection = old->right * gamma;
             drain = old->right - reflection;
-            new->left += reflection;
+            new->left += reflection * (1-DAMPING);
         } else {
             // otherwise the new left moving energy is left moving energy to the old right
             struct Segment *old_right = &(segments_front[i+1]);
@@ -328,7 +335,7 @@ jack_default_audio_sample_t run_tract(jack_default_audio_sample_t glottal_source
             double gamma = reflection(old_right->z, old->z);
             jack_default_audio_sample_t reflection = old_right->left * gamma;
             new->left += old_right->left - reflection;
-            new_right->right += reflection;
+            new_right->right += reflection * (1-DAMPING);
         }
     }
 
@@ -452,7 +459,7 @@ int main(int argc, char **argv) {
 
     // create jack client
     jack_status_t status;
-    client = jack_client_open("nancealoid tract", JackNullOption, &status, NULL);
+    client = jack_client_open("nancealoid", JackNullOption, &status, NULL);
     if(client == NULL) {
         fprintf(stderr, "could not create jack client\nstatus = 0x%2.0x\n", status);
         if(status & JackServerFailed) {
@@ -469,7 +476,7 @@ int main(int argc, char **argv) {
     jack_on_shutdown(client, jack_shutdown, 0);
 
     // create in and out port
-    midi_input_port = jack_port_register(client, "tract control", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
+    midi_input_port = jack_port_register(client, "nancealoid control", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
     input_port = jack_port_register(client, "glottal source", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
     output_port = jack_port_register(client, "vocal tract output", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
 

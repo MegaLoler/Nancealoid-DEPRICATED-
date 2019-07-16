@@ -1,8 +1,8 @@
-tract: tract.c
-	gcc tract.c -ljack -lm -Wall -o tract
+nancealoid: main.c
+	gcc main.c -ljack -lm -Wall -o nancealoid
 
-clean: tract
-	rm tract
+clean: nancealoid
+	rm nancealoid
 
-run: tract
-	./tract
+run: nancealoid
+	./nancealoid
